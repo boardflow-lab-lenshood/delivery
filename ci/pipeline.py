@@ -76,9 +76,11 @@ def build_images(target: dict, scope: str) -> dict[str, str]:
             main_sha = run("git", "-C", str(source), "rev-parse", "origin/main")
             main_tree = run("git", "-C", str(source), "rev-parse", "origin/main^{tree}")
             tree_tag = f"boardflow-real-uat/{name}:tree-{tree}"
-            equivalent = subprocess.run(["docker", "image", "inspect", tree_tag], capture_output=True, text=True, timeout=30)
+            equivalent_tag = tree_tag
+            equivalent = subprocess.run(["docker", "image", "inspect", equivalent_tag], capture_output=True, text=True, timeout=30)
             if equivalent.returncode and tree == main_tree:
-                equivalent = subprocess.run(["docker", "image", "inspect", f"boardflow-real-uat/{name}:{main_sha}"], capture_output=True, text=True, timeout=30)
+                equivalent_tag = f"boardflow-real-uat/{name}:{main_sha}"
+                equivalent = subprocess.run(["docker", "image", "inspect", equivalent_tag], capture_output=True, text=True, timeout=30)
             if equivalent.returncode == 0:
                 # The source tree is identical. Preserve the built filesystem,
                 # with a new immutable image carrying this candidate commit.
@@ -87,8 +89,8 @@ def build_images(target: dict, scope: str) -> dict[str, str]:
                 if label.get("org.opencontainers.image.source_tree") == tree or (tree == main_tree and label.get("org.opencontainers.image.revision") == main_sha):
                     recipe = scratch / "identity-layer"
                     recipe.mkdir()
-                    (recipe / "Dockerfile").write_text(f"FROM {base_image['Id']}\n")
-                    docker("build", "--label", f"org.opencontainers.image.revision={sha}", "--label", f"org.opencontainers.image.source_tree={tree}", "--tag", tag, str(recipe))
+                    (recipe / "Dockerfile").write_text(f"FROM {equivalent_tag}\n")
+                    docker("build", "--pull=false", "--label", f"org.opencontainers.image.revision={sha}", "--label", f"org.opencontainers.image.source_tree={tree}", "--tag", tag, str(recipe))
                     docker("tag", tag, tree_tag)
                     images[name] = json.loads(docker("image", "inspect", tag))[0]["Id"]
                     continue
