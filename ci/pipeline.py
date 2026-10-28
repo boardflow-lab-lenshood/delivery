@@ -225,7 +225,7 @@ def settle(target: dict) -> dict:
         assert_owned(identity, original)
     checkpoint("before_settle_resources")
     for identity in ids:
-        docker("rm", "--force", identity)
+        docker("rm", "--force", "--volumes", identity)
         checkpoint("after_settle_container")
     for network in networks:
         state = json.loads(docker("network", "inspect", network))[0]
