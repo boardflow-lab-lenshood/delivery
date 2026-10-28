@@ -21,6 +21,45 @@ LABEL = "aiworkforce.real-uat.operation"
 SERVICES = {"vote", "result", "worker"}
 
 
+
+# Explicit isolated regression controls. No control file means normal delivery.
+# These checkpoints interrupt REAL operations; they never manufacture receipts.
+CONTROL_ROOT = Path("/home/lenshood/boardflow-real-uat/regression2")
+
+
+def checkpoint(phase: str) -> None:
+    control = CONTROL_ROOT / "control.json"
+    if not control.exists():
+        return
+    target = json.loads(os.environ["BOARD_DELIVERY_TARGET"])
+    operation = os.environ["BOARD_DELIVERY_OPERATION"]
+    entries = json.loads(control.read_text()).get("entries", [])
+    for entry in entries:
+        if entry.get("phase") != phase:
+            continue
+        if entry.get("action") not in (None, target.get("action", "DEPLOY_CANDIDATE")):
+            continue
+        if entry.get("operation_id") not in (None, operation):
+            continue
+        if entry.get("environment_id") not in (None, target["environment_id"]):
+            continue
+        gate = entry["gate"]
+        if not re.fullmatch(r"[a-z0-9_-]{1,100}", gate):
+            raise RuntimeError("Invalid regression checkpoint key")
+        evidence = CONTROL_ROOT / f"{gate}-{operation}.json"
+        evidence.write_text(json.dumps({"operation_id": operation, "action": target.get("action", "DEPLOY_CANDIDATE"), "phase": phase, "kind": entry["kind"]}))
+        LOG.info("Regression checkpoint operation=%s phase=%s kind=%s", operation, phase, entry["kind"])
+        if entry["kind"] == "FAIL":
+            raise RuntimeError(f"Authorized isolated regression failure at {phase}")
+        if entry["kind"] != "HOLD":
+            raise RuntimeError("Invalid regression checkpoint action")
+        deadline = time.monotonic() + 1200
+        while not (CONTROL_ROOT / f"release-{gate}").exists():
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Isolated regression checkpoint was not released")
+            time.sleep(2)
+
+
 def run(*args: str) -> str:
     completed = subprocess.run(args, capture_output=True, text=True, timeout=900)
     if completed.returncode:
@@ -53,6 +92,7 @@ def wait_http(url: str) -> None:
 
 
 def build_images(target: dict, scope: str) -> dict[str, str]:
+    checkpoint("before_build")
     images = {}
     for revision in target["repositories"]:
         name, sha = revision["repository_id"], revision["sha"]
@@ -139,6 +179,7 @@ def observe(target: dict, operation: str, images: dict) -> dict:
 
 
 def deploy(target: dict, operation: str, images: dict) -> dict:
+    checkpoint("before_deploy")
     prefix = f"bfgh-{operation}"
     docker("network", "create", "--label", f"{LABEL}={operation}", prefix)
     password = secrets.token_urlsafe(24)
@@ -163,6 +204,8 @@ def deploy(target: dict, operation: str, images: dict) -> dict:
         if name in ("vote", "result"):
             extra += ["--publish", "0:80"]
         docker("run", *shared, "--name", f"{prefix}-{name}", "--network-alias", name, *extra, images[name])
+        checkpoint(f"after_service_{name}")
+    checkpoint("before_deployment_observation")
     return observe(target, operation, images)
 
 
@@ -180,8 +223,10 @@ def settle(target: dict) -> dict:
         raise RuntimeError("Resources exist without a deployment journal; manual investigation required")
     for identity in ids:
         assert_owned(identity, original)
-    if ids:
-        docker("rm", "--force", *ids)
+    checkpoint("before_settle_resources")
+    for identity in ids:
+        docker("rm", "--force", identity)
+        checkpoint("after_settle_container")
     for network in networks:
         state = json.loads(docker("network", "inspect", network))[0]
         if state["Labels"].get(LABEL) != original or state.get("Containers"):
@@ -201,6 +246,7 @@ def main():
         raise RuntimeError("Invalid frozen repository set")
     ROOT.mkdir(parents=True, exist_ok=True)
     action = target.get("action", "DEPLOY_CANDIDATE")
+    checkpoint("start")
     if action == "SETTLE":
         actual = settle(target)
     elif action == "VERIFY":
@@ -219,6 +265,7 @@ def main():
         actual = deploy(target, operation, images)
     else:
         raise RuntimeError("Unsupported isolated pipeline action")
+    checkpoint("before_final_receipt")
     value = {"operation_id": operation, "deployment": actual}
     Path("observation.json").write_text(json.dumps(value, indent=2))
     (ROOT / f"{operation}.json").write_text(json.dumps({"target": target, "observation": value}))
