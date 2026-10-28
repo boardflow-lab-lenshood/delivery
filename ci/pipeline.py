@@ -65,7 +65,7 @@ def build_images(target: dict, scope: str) -> dict[str, str]:
                 raise RuntimeError("Checkout differs from the frozen target")
             tag = f"boardflow-real-uat/{name}:{sha}"
             LOG.info("Building service=%s sha=%s", name, sha)
-            docker("build", "--label", f"org.opencontainers.image.revision={sha}",
+            docker("build", "--network=host", "--label", f"org.opencontainers.image.revision={sha}",
                 "--label", f"aiworkforce.real-uat.repository={name}", "--tag", tag, str(source))
             images[name] = json.loads(docker("image", "inspect", tag))[0]["Id"]
         finally:
