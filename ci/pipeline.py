@@ -25,6 +25,9 @@ def run(*args: str) -> str:
     completed = subprocess.run(args, capture_output=True, text=True, timeout=900)
     if completed.returncode:
         # No command arguments or environment values in error messages.
+        if args[:2] == ("docker", "build"):
+            # Build contexts contain public source only, with no injected credentials.
+            LOG.error("Public-source build diagnostics: %s", completed.stderr[-12000:])
         raise RuntimeError(f"{args[0]} failed with exit code {completed.returncode}")
     return completed.stdout.strip()
 
@@ -107,7 +110,7 @@ def deploy(target: dict, operation: str, images: dict) -> dict:
     prefix = f"bfgh-{operation}"
     docker("network", "create", "--label", f"{LABEL}={operation}", prefix)
     password = secrets.token_urlsafe(24)
-    shared = ["--detach", "--network", prefix, "--label", f"{LABEL}={operation}"]
+    shared = ["--detach", "--init", "--network", prefix, "--label", f"{LABEL}={operation}"]
     docker("run", *shared, "--name", f"{prefix}-redis", "--network-alias", "redis", "redis:7-alpine")
     docker("run", *shared, "--name", f"{prefix}-db", "--network-alias", "db",
         "--tmpfs", "/var/lib/postgresql/data", "--env", f"POSTGRES_PASSWORD={password}", "postgres:15-alpine")
