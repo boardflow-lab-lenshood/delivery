@@ -72,10 +72,32 @@ def build_images(target: dict, scope: str) -> dict[str, str]:
                 images[name] = image["Id"]
                 LOG.info("Reusing exact built service=%s sha=%s image=%s", name, sha, image["Id"])
                 continue
+            tree = run("git", "-C", str(source), "rev-parse", "HEAD^{tree}")
+            main_sha = run("git", "-C", str(source), "rev-parse", "origin/main")
+            main_tree = run("git", "-C", str(source), "rev-parse", "origin/main^{tree}")
+            tree_tag = f"boardflow-real-uat/{name}:tree-{tree}"
+            equivalent = subprocess.run(["docker", "image", "inspect", tree_tag], capture_output=True, text=True, timeout=30)
+            if equivalent.returncode and tree == main_tree:
+                equivalent = subprocess.run(["docker", "image", "inspect", f"boardflow-real-uat/{name}:{main_sha}"], capture_output=True, text=True, timeout=30)
+            if equivalent.returncode == 0:
+                # The source tree is identical. Preserve the built filesystem,
+                # with a new immutable image carrying this candidate commit.
+                base_image = json.loads(equivalent.stdout)[0]
+                label = base_image["Config"]["Labels"]
+                if label.get("org.opencontainers.image.source_tree") == tree or (tree == main_tree and label.get("org.opencontainers.image.revision") == main_sha):
+                    recipe = scratch / "identity-layer"
+                    recipe.mkdir()
+                    (recipe / "Dockerfile").write_text(f"FROM {base_image['Id']}\n")
+                    docker("build", "--label", f"org.opencontainers.image.revision={sha}", "--label", f"org.opencontainers.image.source_tree={tree}", "--tag", tag, str(recipe))
+                    docker("tag", tag, tree_tag)
+                    images[name] = json.loads(docker("image", "inspect", tag))[0]["Id"]
+                    continue
             LOG.info("Building service=%s sha=%s", name, sha)
             docker("build", "--network=host", "--label", f"org.opencontainers.image.revision={sha}",
+                "--label", f"org.opencontainers.image.source_tree={tree}",
                 "--label", f"aiworkforce.real-uat.repository={name}", "--tag", tag, str(source))
             images[name] = json.loads(docker("image", "inspect", tag))[0]["Id"]
+            docker("tag", tag, tree_tag)
         finally:
             shutil.rmtree(scratch)
     return images
@@ -146,15 +168,18 @@ def settle(target: dict) -> dict:
     original = target["settles_operation"]
     if not re.fullmatch(r"[a-z0-9_-]{1,64}", original):
         raise RuntimeError("Invalid original operation")
-    saved = json.loads((ROOT / f"{original}.json").read_text())
-    if saved["target"]["environment_id"] != target["environment_id"]:
+    saved_path = ROOT / f"{original}.json"
+    saved = json.loads(saved_path.read_text()) if saved_path.exists() else None
+    if saved and saved["target"]["environment_id"] != target["environment_id"]:
         raise RuntimeError("Settlement refers to another environment")
     ids = docker("ps", "--all", "--quiet", "--filter", f"label={LABEL}={original}").split()
+    networks = docker("network", "ls", "--quiet", "--filter", f"label={LABEL}={original}").split()
+    if saved is None and (ids or networks):
+        raise RuntimeError("Resources exist without a deployment journal; manual investigation required")
     for identity in ids:
         assert_owned(identity, original)
     if ids:
         docker("rm", "--force", *ids)
-    networks = docker("network", "ls", "--quiet", "--filter", f"label={LABEL}={original}").split()
     for network in networks:
         state = json.loads(docker("network", "inspect", network))[0]
         if state["Labels"].get(LABEL) != original or state.get("Containers"):
@@ -185,6 +210,7 @@ def main():
         actual = observe(target, original, images)
         actual.update(verified=True, verifies_operation=original, verifies_run=target["verifies_run"])
     elif action in ("DEPLOY_CANDIDATE", "DEPLOY_PROD"):
+        (ROOT / f"{operation}.json").write_text(json.dumps({"target": target, "stage": "building"}))
         images = build_images(target, operation) if action == "DEPLOY_CANDIDATE" else {item["service_id"]: item["artifact_ref"] for item in target["artifacts"]}
         # Journal the scope before creating resources, including partial failures.
         (ROOT / f"{operation}.json").write_text(json.dumps({"target": target, "images": images}))
