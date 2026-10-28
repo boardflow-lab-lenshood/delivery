@@ -1,0 +1,32 @@
+name: Boardflow isolated delivery
+run-name: board-delivery:${{ inputs.operation_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation_id:
+        description: Immutable Boardflow operation ID
+        required: true
+      delivery_target:
+        description: Frozen deployment target JSON
+        required: true
+permissions:
+  contents: read
+jobs:
+  delivery:
+    runs-on: [self-hosted, Linux, ARM64, boardflow-real-uat]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build, deploy, verify or settle the frozen target
+        env:
+          BOARD_DELIVERY_OPERATION: ${{ inputs.operation_id }}
+          BOARD_DELIVERY_TARGET: ${{ inputs.delivery_target }}
+        run: python3 ci/pipeline.py
+      - name: Publish actual deployment observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: board-delivery-observation-${{ inputs.operation_id }}
+          path: observation.json
+          if-no-files-found: error
+          retention-days: 14
