@@ -64,6 +64,14 @@ def build_images(target: dict, scope: str) -> dict[str, str]:
             if run("git", "-C", str(source), "rev-parse", "HEAD") != sha:
                 raise RuntimeError("Checkout differs from the frozen target")
             tag = f"boardflow-real-uat/{name}:{sha}"
+            cached = subprocess.run(["docker", "image", "inspect", tag], capture_output=True, text=True, timeout=30)
+            if cached.returncode == 0:
+                image = json.loads(cached.stdout)[0]
+                if image["Config"]["Labels"].get("org.opencontainers.image.revision") != sha:
+                    raise RuntimeError("Cached image has a different source revision")
+                images[name] = image["Id"]
+                LOG.info("Reusing exact built service=%s sha=%s image=%s", name, sha, image["Id"])
+                continue
             LOG.info("Building service=%s sha=%s", name, sha)
             docker("build", "--network=host", "--label", f"org.opencontainers.image.revision={sha}",
                 "--label", f"aiworkforce.real-uat.repository={name}", "--tag", tag, str(source))
