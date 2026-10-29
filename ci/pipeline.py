@@ -1,6 +1,8 @@
 """Real Actions delivery for the isolated three-service voting application."""
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -178,10 +180,42 @@ def observe(target: dict, operation: str, images: dict) -> dict:
     return actual
 
 
+def create_owned_network(operation: str) -> None:
+    """Use a free /24 without consuming Docker's small default subnet pool."""
+    identities = docker("network", "ls", "--quiet").split()
+    networks = json.loads(docker("network", "inspect", *identities)) if identities else []
+    occupied = [ipaddress.ip_network(item["Subnet"], strict=False)
+                for network in networks for item in (network["IPAM"].get("Config") or [])
+                if item.get("Subnet") and ":" not in item["Subnet"]]
+    routes = json.loads(run("ip", "-json", "-4", "route", "show", "table", "all"))
+    occupied.extend(ipaddress.ip_network(route["dst"], strict=False)
+                    for route in routes if route.get("dst") not in (None, "default", "0.0.0.0/0"))
+    pool = ipaddress.ip_network("10.240.0.0/12")
+    slots = pool.num_addresses // 256
+    first = int.from_bytes(hashlib.sha256(operation.encode()).digest()[:2]) % slots
+    for offset in range(slots):
+        address = int(pool.network_address) + ((first + offset) % slots) * 256
+        subnet = ipaddress.ip_network((address, 24))
+        if any(subnet.overlaps(item) for item in occupied):
+            continue
+        result = subprocess.run([
+            "docker", "network", "create", "--subnet", str(subnet),
+            "--label", f"{LABEL}={operation}", f"bfgh-{operation}",
+        ], capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            LOG.info("Created owned network operation=%s subnet=%s", operation, subnet)
+            return
+        if "Pool overlaps with other one on this address space" in result.stderr:
+            # Docker rejected creation atomically; another allocator won this slot.
+            continue
+        raise RuntimeError("Owned network creation failed")
+    raise RuntimeError("No non-overlapping isolated test subnet is available")
+
+
 def deploy(target: dict, operation: str, images: dict) -> dict:
     checkpoint("before_deploy")
     prefix = f"bfgh-{operation}"
-    docker("network", "create", "--label", f"{LABEL}={operation}", prefix)
+    create_owned_network(operation)
     password = secrets.token_urlsafe(24)
     shared = ["--detach", "--init", "--network", prefix, "--label", f"{LABEL}={operation}"]
     docker("run", *shared, "--name", f"{prefix}-redis", "--network-alias", "redis", "redis:7-alpine")
