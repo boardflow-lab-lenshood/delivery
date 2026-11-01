@@ -243,6 +243,36 @@ def deploy(target: dict, operation: str, images: dict) -> dict:
     return observe(target, operation, images)
 
 
+def retain_production(target: dict, original: str, saved: dict | None) -> dict:
+    """Observe the original production without issuing resource removal calls."""
+    if target.get("retain") is not True:
+        raise RuntimeError("Production SETTLE requires retain=true; removal is prohibited")
+    if saved is None or saved["target"].get("action") != "DEPLOY_PROD":
+        raise RuntimeError("Production retention requires its original deployment journal")
+    if any(
+        target.get(key) != saved["target"].get(key)
+        for key in ("environment_id", "config_revision")
+    ):
+        raise RuntimeError("Production retention differs from the original deployment")
+    revisions = {item["repository_id"]: item["sha"] for item in target["repositories"]}
+    original_revisions = {
+        item["repository_id"]: item["sha"] for item in saved["target"]["repositories"]
+    }
+    if revisions != original_revisions:
+        raise RuntimeError("Production retention cannot replace the original revisions")
+    services = saved["observation"]["deployment"]["services"]
+    images = {item["service_id"]: item["artifact_ref"] for item in services}
+    if set(images) != SERVICES or len(services) != len(SERVICES):
+        raise RuntimeError("Original production artifacts are incomplete")
+    actual = observe(target, original, images)
+    actual.update(settles_operation=original, settles_run=target["settles_run"], settled=True)
+    actual["services"] = [
+        {**item, "disposition": "RETAINED", "active": True, "settled": True}
+        for item in actual["services"]
+    ]
+    return actual
+
+
 def settle(target: dict) -> dict:
     original = target["settles_operation"]
     if not re.fullmatch(r"[a-z0-9_-]{1,64}", original):
@@ -251,6 +281,10 @@ def settle(target: dict) -> dict:
     saved = json.loads(saved_path.read_text()) if saved_path.exists() else None
     if saved and saved["target"]["environment_id"] != target["environment_id"]:
         raise RuntimeError("Settlement refers to another environment")
+    if target["environment_id"] == "real-uat-prod":
+        return retain_production(target, original, saved)
+    if target.get("retain") not in (None, False):
+        raise RuntimeError("Test SETTLE removes temporary resources; retention is invalid")
     ids = docker("ps", "--all", "--quiet", "--filter", f"label={LABEL}={original}").split()
     networks = docker("network", "ls", "--quiet", "--filter", f"label={LABEL}={original}").split()
     if saved is None and (ids or networks):

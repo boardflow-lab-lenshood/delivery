@@ -16,8 +16,24 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, boardflow-real-uat]
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Read the exact workflow source from GitHub
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          task_source=$(mktemp -d "$RUNNER_TEMP/boardflow-source.XXXXXX")
+          task_archive=$(mktemp "$RUNNER_TEMP/boardflow-source.XXXXXX.tar.gz")
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 90 \
+            "https://codeload.github.com/$SOURCE_REPOSITORY/tar.gz/$SOURCE_SHA" \
+            --output "$task_archive"
+          tar -xzf "$task_archive" --strip-components=1 -C "$task_source"
+          rm "$task_archive"
+          echo "BOARD_DELIVERY_SOURCE=$task_source" >> "$GITHUB_ENV"
+      - name: Check resource retention rules
+        working-directory: ${{ env.BOARD_DELIVERY_SOURCE }}
+        run: python3 -m unittest discover -s ci -p 'test_*.py'
       - name: Build, deploy, verify or settle the frozen target
+        working-directory: ${{ env.BOARD_DELIVERY_SOURCE }}
         env:
           BOARD_DELIVERY_OPERATION: ${{ inputs.operation_id }}
           BOARD_DELIVERY_TARGET: ${{ inputs.delivery_target }}
@@ -27,6 +43,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: board-delivery-observation-${{ inputs.operation_id }}
-          path: observation.json
+          path: ${{ env.BOARD_DELIVERY_SOURCE }}/observation.json
           if-no-files-found: error
           retention-days: 14

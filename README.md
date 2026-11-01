@@ -21,3 +21,17 @@ observation.json. A green workflow alone is insufficient to prove deployment.
 
 Feature branches and PRs belong in the service repositories. Never commit
 access tokens, model credentials, runner registration files or database secrets.
+
+For `SETTLE`, `real-uat-test` removes only resources owned by
+`settles_operation`. Production requires `retain: true`, the original
+`settles_operation` and `settles_run`; it checks the original images and live
+health without removing containers or networks. Missing or invalid production
+retention is rejected. Never infer retention from a green workflow alone.
+
+The workflow downloads this public repository at the exact `github.sha` using
+GitHub's archive endpoint into a fresh directory. It runs the resource retention
+tests before any deployment work. Run those tests locally with:
+
+```sh
+python3 -m unittest discover -s ci -p 'test_*.py'
+```
