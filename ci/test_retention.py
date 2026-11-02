@@ -20,13 +20,13 @@ class RetentionTests(unittest.TestCase):
         self.addCleanup(self.root_patch.stop)
         self.operation = 'original-production'
         self.target = {
-            'action': 'SETTLE', 'environment_id': 'real-uat-prod',
+            'action': 'SETTLE', 'environment_id': 'arena-20261102-prod',
             'config_revision': 9, 'settles_operation': self.operation,
             'settles_run': 'original-run', 'retain': True,
             'repositories': [{'repository_id': s, 'sha': 'a' * 40} for s in sorted(pipeline.SERVICES)],
         }
         self.actual = {
-            'environment_id': 'real-uat-prod', 'environment_url': 'http://test:80',
+            'environment_id': 'arena-20261102-prod', 'environment_url': 'http://test:80',
             'repositories': self.target['repositories'],
             'services': [{'service_id': s, 'healthy': True, 'artifact_ref': 'sha256:' + 'b' * 64,
                           'repositories': [{'repository_id': s, 'sha': 'a' * 40}]}
@@ -118,15 +118,15 @@ class RetentionTests(unittest.TestCase):
         )
 
     def test_removes_owned_test_resources_when_test_environment_is_settled(self):
-        self.target.update(environment_id='real-uat-test', retain=False)
-        self.saved['target'].update(environment_id='real-uat-test', action='DEPLOY_CANDIDATE')
+        self.target.update(environment_id='arena-20261102-test', retain=False)
+        self.saved['target'].update(environment_id='arena-20261102-test', action='DEPLOY_CANDIDATE')
         self.save()
         pipeline.settle(self.target)
         self.docker.assert_any_call('rm', '--force', '--volumes', 'owned-container')
 
     def test_rejects_test_retention_when_test_resources_should_be_removed(self):
-        self.target['environment_id'] = 'real-uat-test'
-        self.saved['target']['environment_id'] = 'real-uat-test'
+        self.target['environment_id'] = 'arena-20261102-test'
+        self.saved['target']['environment_id'] = 'arena-20261102-test'
         self.save()
         with self.assertRaises(RuntimeError):
             pipeline.settle(self.target)
