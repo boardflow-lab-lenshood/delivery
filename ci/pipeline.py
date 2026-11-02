@@ -18,7 +18,7 @@ import urllib.request
 
 LOG = logging.getLogger("voting-delivery")
 OWNER = "boardflow-lab-lenshood"
-ROOT = Path("/home/lenshood/boardflow-real-uat/deployments")
+ROOT = Path("/home/lenshood/boardflow-arena-20261102/deployments")
 LABEL = "aiworkforce.real-uat.operation"
 SERVICES = {"vote", "result", "worker"}
 
@@ -26,7 +26,7 @@ SERVICES = {"vote", "result", "worker"}
 
 # Explicit isolated regression controls. No control file means normal delivery.
 # These checkpoints interrupt REAL operations; they never manufacture receipts.
-CONTROL_ROOT = Path("/home/lenshood/boardflow-real-uat/regression2")
+CONTROL_ROOT = Path("/home/lenshood/boardflow-arena-20261102/controls")
 
 
 def checkpoint(phase: str) -> None:
@@ -281,7 +281,7 @@ def settle(target: dict) -> dict:
     saved = json.loads(saved_path.read_text()) if saved_path.exists() else None
     if saved and saved["target"]["environment_id"] != target["environment_id"]:
         raise RuntimeError("Settlement refers to another environment")
-    if target["environment_id"] == "real-uat-prod":
+    if target["environment_id"] == "arena-20261102-prod":
         return retain_production(target, original, saved)
     if target.get("retain") not in (None, False):
         raise RuntimeError("Test SETTLE removes temporary resources; retention is invalid")
@@ -308,7 +308,7 @@ def settle(target: dict) -> dict:
 def main():
     operation = os.environ["BOARD_DELIVERY_OPERATION"]
     target = json.loads(os.environ["BOARD_DELIVERY_TARGET"])
-    if not re.fullmatch(r"[a-z0-9_-]{1,64}", operation) or target["environment_id"] not in ("real-uat-test", "real-uat-prod"):
+    if not re.fullmatch(r"[a-z0-9_-]{1,64}", operation) or target["environment_id"] not in ("arena-20261102-test", "arena-20261102-prod"):
         raise RuntimeError("Operation outside the isolated UAT scope")
     if {item["repository_id"] for item in target["repositories"]} != SERVICES or any(not re.fullmatch(r"[a-f0-9]{40}", item["sha"]) for item in target["repositories"]):
         raise RuntimeError("Invalid frozen repository set")
