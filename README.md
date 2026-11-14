@@ -19,6 +19,10 @@ The workflow accepts operation_id and delivery_target. It publishes the
 immutable artifact `board-delivery-observation-<operation_id>`, containing
 observation.json. A green workflow alone is insufficient to prove deployment.
 
+`delivery_target.public_host` can specify the runner VM's reachable IPv4 address
+for endpoint URLs and HTTP health checks. It defaults to `172.16.28.129` for
+existing test setups; set it explicitly when the VM address changes.
+
 Feature branches and PRs belong in the service repositories. Never commit
 access tokens, model credentials, runner registration files or database secrets.
 
