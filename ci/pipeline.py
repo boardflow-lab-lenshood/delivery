@@ -156,6 +156,7 @@ def assert_owned(name: str, operation: str) -> dict:
 
 def observe(target: dict, operation: str, images: dict) -> dict:
     prefix = f"bfgh-{operation}"
+    public_host = str(ipaddress.IPv4Address(target.get("public_host", "172.16.28.129")))
     revisions = {item["repository_id"]: item["sha"] for item in target["repositories"]}
     actual = {"environment_id": target["environment_id"], "config_revision": target["config_revision"],
         "repositories": target["repositories"], "services": [], "endpoints": {}}
@@ -168,7 +169,7 @@ def observe(target: dict, operation: str, images: dict) -> dict:
             raise RuntimeError("Deployed service has stopped")
         if name in ("vote", "result"):
             port = container["NetworkSettings"]["Ports"]["80/tcp"][0]["HostPort"]
-            url = f"http://172.16.28.129:{port}"
+            url = f"http://{public_host}:{port}"
             wait_http(url)
             actual["endpoints"][name] = url
         actual["services"].append({"service_id": name, "status": "SUCCEEDED", "healthy": True,
